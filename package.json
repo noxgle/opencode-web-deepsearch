@@ -1,0 +1,41 @@
+{
+  "name": "web-deepsearch",
+  "version": "1.0.0",
+  "description": "DuckDuckGo web search tool for OpenCode with deep search capabilities",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "prepublish": "tsc"
+  },
+  "keywords": [
+    "opencode",
+    "websearch",
+    "duckduckgo",
+    "ai",
+    "mcp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/web-deepsearch"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "opencode": ">=1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "opencode": {
+    "tools": ["web-deepsearch"]
+  }
+}
