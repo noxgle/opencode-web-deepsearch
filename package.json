@@ -1,6 +1,6 @@
 {
   "name": "web-deepsearch",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DuckDuckGo web search tool for OpenCode with deep search capabilities",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -18,8 +18,9 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/web-deepsearch"
+    "url": "https://github.com/noxgle/web-deepsearch"
   },
+  "homepage": "https://github.com/noxgle/web-deepsearch#readme",
   "author": "",
   "license": "MIT",
   "dependencies": {
