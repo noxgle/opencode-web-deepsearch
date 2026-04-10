@@ -11,18 +11,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install Python dependencies
+        run: pip install ddgs beautifulsoup4 requests aiohttp lxml
+
+      - name: Install OpenCode
         run: |
-          pip install ddgs beautifulsoup4 requests aiohttp lxml
+          curl -L https://opencode.ai/install | bash
+          echo "$HOME/.opencode/bin" >> $GITHUB_PATH
+
+      - name: Create test project
+        run: |
+          mkdir -p test-project/.opencode/tools
+          cp scripts/WebSearchAgent.py test-project/.opencode/tools/
+
+      - name: Create opencode.json
+        run: echo '{"$schema":"https://opencode.ai/config.json","lsp":false,"formatter":false,"tui":false}' > test-project/opencode.json
 
       - name: Run Python script test
         run: |
-          python3 scripts/WebSearchAgent.py --query "TypeScript 5.x features" --max-sources 1 --deep-search false
+          python3 test-project/.opencode/tools/WebSearchAgent.py --query "OpenCode features" --max-sources 1 --deep-search false
+
+      - name: Run E2E validation
+        run: python3 -c "import sys; sys.path.insert(0, 'test-project/.opencode/tools'); from WebSearchAgent import WebDeepSearch; agent = WebDeepSearch(); result = agent.execute(query='OpenCode features', max_sources=1, deep_search=False); print('Query:', result['query']); print('Sources:', result['source_count']); assert result['query'] == 'OpenCode features'; assert result['source_count'] >= 1; print('E2E Test PASSED')"
+
+      - name: Summary
+        run: echo "All E2E tests passed!"
