@@ -12,8 +12,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          repository: noxgle/opencode-web-deepsearch
 
       - uses: actions/setup-python@v5
         with:
@@ -25,7 +23,8 @@ jobs:
       - name: Install OpenCode
         run: |
           curl -L https://opencode.ai/install | bash
-          echo "$HOME/.opencode/bin" >> $GITHUB_PATH
+          # Add to PATH for this step
+          export PATH="$HOME/.opencode/bin:$PATH"
           opencode --version
 
       - name: Install plugin from npm
@@ -37,13 +36,12 @@ jobs:
 
       - name: Test OpenCode loads plugin
         run: |
-          # Test that plugin can be loaded - just verify the package structure
           echo "=== Checking plugin structure ==="
           ls -la node_modules/opencode-web-deepsearch/
           ls -la node_modules/opencode-web-deepsearch/scripts/
           echo "=== Plugin structure OK ==="
 
-      - name: Run Python test via plugin script
+      - name: Run Python test via plugin
         run: |
           python3 node_modules/opencode-web-deepsearch/scripts/WebSearchAgent.py --query "OpenCode" --max-sources 1 --deep-search false
 
