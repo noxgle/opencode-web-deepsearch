@@ -24,17 +24,52 @@ Or install all dependencies at once:
 pip install ddgs beautifulsoup4 requests aiohttp lxml
 ```
 
-### 2. Add plugin to OpenCode
+### 2a. Custom Tool (local file)
 
-Add to your `opencode.json`:
+Create the tool definition file:
 
-```json
-{
-  "plugin": ["opencode-web-deepsearch"]
-}
+**.opencode/tools/web-deepsearch.ts**
+```typescript
+import { tool } from "@opencode-ai/plugin"
+import path from "path"
+
+export default tool({
+  description:
+    "Search the web using DuckDuckGo and extract full page content from sources. Returns raw JSON data with sources array containing title, url, snippet, content, and domain. Use this tool to gather web research data.",
+  args: {
+    query: tool.schema.string().describe("Search query"),
+    max_sources: tool.schema
+      .number()
+      .optional()
+      .default(3)
+      .describe("Maximum sources to extract (default: 3)"),
+    deep_search: tool.schema
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Enable iterative search refinement (default: true)"),
+  },
+  async execute(args, context) {
+    const scriptPath = path.join(context.worktree, "node_modules/opencode-web-deepsearch/scripts/WebSearchAgent.py")
+    const maxSources = args.max_sources ?? 3
+    const deepSearch = args.deep_search !== false
+
+    const result = await Bun.$`python3 ${scriptPath} --query ${args.query} --max-sources ${maxSources} --deep-search ${deepSearch}`.text()
+    return result.trim()
+  },
+})
 ```
 
-Or use npm package (recommended):
+Place the file in your project's `.opencode/tools/` directory:
+
+```bash
+mkdir -p .opencode/tools
+# Copy or create the file in .opencode/tools/
+```
+
+### 2b. npm Plugin
+
+Add to your `opencode.json`:
 
 ```json
 {
@@ -46,7 +81,7 @@ OpenCode will automatically install the plugin from npm.
 
 ## Usage
 
-The tool is available as `web-deepsearch` in OpenCode.
+The tool is available as `web-deepsearch` in OpenCode (both installation methods provide the same tool).
 
 ### Arguments
 
