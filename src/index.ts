@@ -39,7 +39,7 @@ export default async function webDeepSearchPlugin(): Promise<ReturnType<typeof t
 export const WebDeepSearchPlugin: Plugin = async () => {
   return {
     tool: {
-      web_deepsearch: WebDeepSearchTool,
+      "web-deepsearch": WebDeepSearchTool,
     },
   }
 }

@@ -46,7 +46,7 @@ OpenCode will automatically install the plugin from npm.
 
 ## Usage
 
-The tool is available as `opencode_web_deepsearch` in OpenCode.
+The tool is available as `web-deepsearch` in OpenCode.
 
 ### Arguments
 
