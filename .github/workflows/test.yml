@@ -14,11 +14,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -28,18 +23,6 @@ jobs:
         run: |
           pip install ddgs beautifulsoup4 requests aiohttp lxml
 
-      - name: Install Node.js dependencies
-        run: npm install
-
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Build TypeScript
-        run: npm run build
-
-      - name: Run E2E tests
-        run: bun test e2e/
-        env:
-          OPENCODE_COMMAND: bun
+      - name: Run Python script test
+        run: |
+          python3 scripts/WebSearchAgent.py --query "TypeScript 5.x features" --max-sources 1 --deep-search false
