@@ -23,12 +23,11 @@ jobs:
       - name: Install OpenCode
         run: |
           curl -L https://opencode.ai/install | bash
-          # Add to PATH for this step
           export PATH="$HOME/.opencode/bin:$PATH"
           opencode --version
 
-      - name: Install plugin from npm
-        run: npm install opencode-web-deepsearch
+      - name: Install plugin from npm (skip peer deps)
+        run: npm install opencode-web-deepsearch --legacy-peer-deps
 
       - name: Create opencode.json with plugin
         run: |
