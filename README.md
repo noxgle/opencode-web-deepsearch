@@ -1,4 +1,4 @@
-# web-deepsearch
+# opencode-web-deepsearch
 
 DuckDuckGo web search tool for OpenCode with deep search capabilities.
 
@@ -30,7 +30,7 @@ Add to your `opencode.json`:
 
 ```json
 {
-  "plugin": ["web-deepsearch"]
+  "plugin": ["opencode-web-deepsearch"]
 }
 ```
 
@@ -38,7 +38,7 @@ Or use npm package (recommended):
 
 ```json
 {
-  "plugin": ["web-deepsearch"]
+  "plugin": ["opencode-web-deepsearch"]
 }
 ```
 
@@ -46,7 +46,7 @@ OpenCode will automatically install the plugin from npm.
 
 ## Usage
 
-The tool is available as `web_deepsearch` in OpenCode.
+The tool is available as `opencode_web_deepsearch` in OpenCode.
 
 ### Arguments
 
