@@ -1,6 +1,6 @@
 {
   "name": "opencode-web-deepsearch",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "DuckDuckGo web search tool for OpenCode with deep search capabilities",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
