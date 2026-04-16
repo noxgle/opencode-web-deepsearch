@@ -3,8 +3,9 @@ import { fileURLToPath } from "url"
 import path from "path"
 
 // Get the directory where the plugin is installed
+// __filename points to dist/index.js, so we need to go up one level to the package root
 const __filename = fileURLToPath(import.meta.url)
-const pluginDir = path.dirname(__filename)
+const pluginDir = path.resolve(path.dirname(__filename), "..")
 const scriptPath = path.join(pluginDir, "scripts", "WebSearchAgent.py")
 
 const WebDeepSearchTool = tool({
