@@ -1,0 +1,43 @@
+FROM node:20-bookworm
+
+# Install Bun for OpenCode plugin installation
+RUN apt-get update && apt-get install -y python3 python3-pip curl unzip
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:$PATH"
+
+# Install Python dependencies
+RUN pip install --break-system-packages ddgs beautifulsoup4 requests aiohttp lxml
+
+# Install OpenCode (includes Bun)
+RUN curl -fsSL https://opencode.ai/install | bash
+ENV PATH="/root/.opencode/bin:/root/.bun/bin:$PATH"
+
+# Create test project
+WORKDIR /test
+RUN bun init -y
+
+# Create opencode.json with plugin
+RUN echo '{"$schema":"https://opencode.ai/config.json","plugin":["opencode-web-deepsearch"]}' > opencode.json
+
+# Install plugin using Bun (how OpenCode does it)
+RUN bun add opencode-web-deepsearch
+
+# Verify structure
+RUN echo "=== Checking plugin structure ===" && \
+    ls -la node_modules/opencode-web-deepsearch/ && \
+    ls -la node_modules/opencode-web-deepsearch/scripts/
+
+# Test Python script directly
+RUN echo "=== Testing Python script directly ===" && \
+    python3 node_modules/opencode-web-deepsearch/scripts/WebSearchAgent.py \
+        --query "OpenCode test" --max-sources 1 --deep-search false
+
+# Final check
+RUN echo "=== Testing OpenCode ===" && opencode --version
+
+# Test plugin loading (start server and check logs)
+RUN echo "=== Testing plugin load ===" && \
+    timeout 15 bash -c 'opencode serve --port 18765 > /tmp/opencode.log 2>&1 & sleep 10 && cat /tmp/opencode.log' || true
+
+# Show if plugin loaded successfully
+RUN echo "=== Plugin load check ===" && cat /tmp/opencode.log 2>/dev/null | grep -E "plugin|tool|error" | head -20 || echo "No plugin logs found"
