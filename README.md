@@ -20,6 +20,8 @@ pip install ddgs beautifulsoup4 requests aiohttp lxml
 
 ### 2. Add plugin to OpenCode
 
+The npm package name is `opencode-web-deepsearch`.
+
 Add to your `opencode.json`:
 
 ```json
