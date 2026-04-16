@@ -28,7 +28,7 @@ Add to your `opencode.json`:
 }
 ```
 
-OpenCode will automatically install the plugin from npm.
+OpenCode will automatically install the plugin from npm using Bun.
 
 ## Usage
 
@@ -43,6 +43,12 @@ The tool is available as `web-deepsearch` in OpenCode.
 | `deep_search` | boolean | true | Enable iterative search refinement |
 
 ### Example
+
+```
+Use the web-deepsearch tool to search for "TypeScript 5.x features"
+```
+
+Or with explicit arguments:
 
 ```json
 {
@@ -75,10 +81,28 @@ The tool is available as `web-deepsearch` in OpenCode.
 ## Requirements
 
 - Python 3.8+
-- `ddgs` or `duckduckgo_search`
+- `ddgs`
 - `beautifulsoup4`
 - `requests`
-- `aiohttp` (optional, for async fetching)
+- `aiohttp`
+- `lxml`
+
+## Development
+
+```bash
+# Install dependencies
+pip install ddgs beautifulsoup4 requests aiohttp lxml
+
+# Build TypeScript
+npm run build
+
+# Test Python script directly
+python3 scripts/WebSearchAgent.py --query "test" --max-sources 1 --deep-search false
+
+# Test with Docker
+docker build -f Dockerfile.test -t opencode-plugin-test .
+docker run -it opencode-plugin-test bash
+```
 
 ## Comparison with OpenCode's Built-in Search (Exa)
 
