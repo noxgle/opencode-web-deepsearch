@@ -2,29 +2,50 @@
 
 ## Project Overview
 
-This is an OpenCode plugin that provides a DuckDuckGo web search tool with deep search capabilities. It's an npm package (`opencode-web-deepsearch`) that registers a `web-deepsearch` tool.
+OpenCode plugin providing DuckDuckGo web search with iterative deep search refinement. npm package: `opencode-web-deepsearch`
+
+## Architecture
+
+- `src/index.ts` - Plugin entry, exports `web-deepsearch` tool
+- `scripts/WebSearchAgent.py` - Python search script (bundled with npm)
+- **Important**: `import.meta.url` resolves to `dist/index.js`, so path must go up one level to find `scripts/`
 
 ## Key Commands
 
 ```bash
 npm run build      # Compile TypeScript
-npm run test       # Run e2e tests (requires Python deps)
+npm test           # Run e2e tests (vitest)
+```
+
+## Testing Plugin Locally
+
+```bash
+# 1. Install Python dependencies
+pip install ddgs beautifulsoup4 requests aiohttp lxml
+
+# 2. Test Python script directly
+python3 scripts/WebSearchAgent.py --query "test" --max-sources 1 --deep-search false
+
+# 3. Test with Docker (OpenCode + plugin)
+docker build -f Dockerfile.test -t opencode-plugin-test .
+docker run -it opencode-plugin-test bash
 ```
 
 ## Requirements
 
-- **Python 3.8+** with: `ddgs`, `beautifulsoup4`, `requests`, `aiohttp`, `lxml`
-- **Node.js 18+**
-- **Bun** (for running the tool in OpenCode)
+- **Python 3.8+**: `ddgs`, `beautifulsoup4`, `requests`, `aiohttp`, `lxml`
+- **Bun** - OpenCode uses Bun to install plugins, not npm
+- **Node.js 18+** - for building
 
-## How It Works
+## Critical Notes
 
-1. OpenCode loads the plugin via npm
-2. The plugin registers the `web-deepsearch` tool
-3. On execution, it runs `scripts/WebSearchAgent.py` using Bun's backtick syntax
-4. The Python script searches DuckDuckGo and extracts page content
+- **No peer dependency on `opencode`** - it doesn't exist on public npm
+- OpenCode installs plugins via `bun add`, caches in `~/.cache/opencode/packages/`
+- Plugin must work when installed by Bun in OpenCode's cache directory
 
-## Known Issues
+## Publishing
 
-- The Python `ddgs` library occasionally returns empty results for certain queries (rate limiting)
-- Vitest e2e tests don't run properly in this environment - manual testing with `python3 scripts/WebSearchAgent.py` is more reliable
+```bash
+npm run build && npm version patch && npm publish
+git push
+```
