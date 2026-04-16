@@ -1,6 +1,11 @@
 import { tool, type Plugin } from "@opencode-ai/plugin"
-import os from "os"
+import { fileURLToPath } from "url"
 import path from "path"
+
+// Get the directory where the plugin is installed
+const __filename = fileURLToPath(import.meta.url)
+const pluginDir = path.dirname(__filename)
+const scriptPath = path.join(pluginDir, "scripts", "WebSearchAgent.py")
 
 const WebDeepSearchTool = tool({
   description:
@@ -19,10 +24,6 @@ const WebDeepSearchTool = tool({
       .describe("Enable iterative search refinement (default: true)"),
   },
   async execute(args) {
-    // Get the directory where the plugin is installed
-    const pluginDir = path.dirname(require.main?.filename || __filename)
-    const scriptPath = path.join(pluginDir, "scripts", "WebSearchAgent.py")
-
     const maxSources = args.max_sources ?? 3
     const deepSearch = args.deep_search !== false
 

@@ -15,59 +15,10 @@ DuckDuckGo web search tool for OpenCode with deep search capabilities.
 ### 1. Install Python dependencies
 
 ```bash
-pip install ddgs beautifulsoup4 requests aiohttp
-```
-
-Or install all dependencies at once:
-
-```bash
 pip install ddgs beautifulsoup4 requests aiohttp lxml
 ```
 
-### 2a. Custom Tool (local file)
-
-Create the tool definition file:
-
-**.opencode/tools/web-deepsearch.ts**
-```typescript
-import { tool } from "@opencode-ai/plugin"
-import path from "path"
-
-export default tool({
-  description:
-    "Search the web using DuckDuckGo and extract full page content from sources. Returns raw JSON data with sources array containing title, url, snippet, content, and domain. Use this tool to gather web research data.",
-  args: {
-    query: tool.schema.string().describe("Search query"),
-    max_sources: tool.schema
-      .number()
-      .optional()
-      .default(3)
-      .describe("Maximum sources to extract (default: 3)"),
-    deep_search: tool.schema
-      .boolean()
-      .optional()
-      .default(true)
-      .describe("Enable iterative search refinement (default: true)"),
-  },
-  async execute(args, context) {
-    const scriptPath = path.join(context.worktree, "node_modules/opencode-web-deepsearch/scripts/WebSearchAgent.py")
-    const maxSources = args.max_sources ?? 3
-    const deepSearch = args.deep_search !== false
-
-    const result = await Bun.$`python3 ${scriptPath} --query ${args.query} --max-sources ${maxSources} --deep-search ${deepSearch}`.text()
-    return result.trim()
-  },
-})
-```
-
-Place the file in your project's `.opencode/tools/` directory:
-
-```bash
-mkdir -p .opencode/tools
-# Copy or create the file in .opencode/tools/
-```
-
-### 2b. npm Plugin
+### 2. Add plugin to OpenCode
 
 Add to your `opencode.json`:
 
@@ -81,7 +32,7 @@ OpenCode will automatically install the plugin from npm.
 
 ## Usage
 
-The tool is available as `web-deepsearch` in OpenCode (both installation methods provide the same tool).
+The tool is available as `web-deepsearch` in OpenCode.
 
 ### Arguments
 
