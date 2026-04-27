@@ -15,6 +15,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 from collections import Counter
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -68,7 +69,7 @@ CONTENT_SELECTORS = [
     ".entry-content",
     ".post-body",
     ".markdown-body",
-    "prose",
+    ".prose",
 ]
 
 STRIP_ELEMENTS = [
@@ -93,8 +94,54 @@ DEFAULT_CONFIG = {
     "max_sources": 5,
     "min_confidence": 0.7,
     "timeout": 30,
+    "connect_timeout": 10,
     "max_content_length": 8000,
+    "max_response_bytes": 2_000_000,
     "max_concurrent_fetches": 5,
+    "search_retries": 3,
+    "fetch_retries": 2,
+    "retry_backoff_seconds": 0.6,
+}
+
+STOPWORDS = {
+    "about",
+    "after",
+    "again",
+    "also",
+    "been",
+    "being",
+    "between",
+    "could",
+    "does",
+    "from",
+    "have",
+    "into",
+    "just",
+    "more",
+    "most",
+    "over",
+    "such",
+    "than",
+    "that",
+    "their",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "using",
+    "what",
+    "when",
+    "which",
+    "with",
+    "your",
+    "http",
+    "https",
+    "www",
+    "com",
+    "org",
+    "guide",
+    "tutorial",
 }
 
 
@@ -108,6 +155,14 @@ class WebDeepSearch:
         self.sources: List[Dict[str, Any]] = []
         self.seen_urls: set = set()
         self.iterations_used = 0
+        self.error_counts: Counter = Counter()
+        self.skipped_url_reasons: Counter = Counter()
+        self.fetch_stats: Dict[str, int] = {
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "non_html": 0,
+        }
 
     def execute(
         self,
@@ -119,6 +174,14 @@ class WebDeepSearch:
         self.sources = []
         self.seen_urls = set()
         self.iterations_used = 0
+        self.error_counts = Counter()
+        self.skipped_url_reasons = Counter()
+        self.fetch_stats = {
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "non_html": 0,
+        }
         max_sources = max_sources or self.config["max_sources"]
         current_query = query
 
@@ -128,21 +191,41 @@ class WebDeepSearch:
             if not results:
                 break
 
-            new_urls = [r["url"] for r in results if r["url"] not in self.seen_urls]
-            if new_urls:
+            new_items: List[Dict[str, str]] = []
+            for r in results:
+                url = (r.get("url") or "").strip()
+                if not url:
+                    self.skipped_url_reasons["empty_url"] += 1
+                    continue
+                if url in self.seen_urls:
+                    self.skipped_url_reasons["duplicate_url"] += 1
+                    continue
+                new_items.append(
+                    {
+                        "url": url,
+                        "title": r.get("title", ""),
+                        "snippet": r.get("snippet", ""),
+                    }
+                )
+
+            if new_items:
+                new_urls = [item["url"] for item in new_items]
+                self.fetch_stats["attempted"] += len(new_urls)
                 contents = self._extract_batch(new_urls)
-                for url, content, result in zip(new_urls, contents, results):
+                for item, content in zip(new_items, contents):
+                    self.seen_urls.add(item["url"])
                     if not content:
+                        self.skipped_url_reasons["empty_content"] += 1
                         continue
                     self.sources.append(
                         {
-                            "url": url,
-                            "title": result.get("title", ""),
-                            "snippet": result.get("snippet", ""),
+                            "url": item["url"],
+                            "title": item.get("title", ""),
+                            "snippet": item.get("snippet", ""),
                             "content": content,
                         }
                     )
-                    self.seen_urls.add(url)
+                    self.fetch_stats["succeeded"] += 1
 
             if not deep_search:
                 break
@@ -160,23 +243,34 @@ class WebDeepSearch:
                 "ERROR: duckduckgo-search not installed. Install with: pip install ddgs",
                 file=sys.stderr,
             )
+            self.error_counts["ddg_missing"] += 1
             return []
-        results = []
-        try:
-            with DDGS() as ddgs:
-                for r in ddgs.text(
-                    query, max_results=max_results, timeout=self.config["timeout"]
-                ):
-                    results.append(
-                        {
-                            "url": r.get("href", ""),
-                            "title": r.get("title", ""),
-                            "snippet": r.get("body", ""),
-                        }
-                    )
-        except Exception as e:
-            print(f"Search error: {e}", file=sys.stderr)
-        return results
+        retries = max(1, int(self.config.get("search_retries", 1)))
+        for attempt in range(retries):
+            results: List[Dict[str, str]] = []
+            try:
+                with DDGS() as ddgs:
+                    for r in ddgs.text(
+                        query, max_results=max_results, timeout=self.config["timeout"]
+                    ):
+                        results.append(
+                            {
+                                "url": r.get("href", ""),
+                                "title": r.get("title", ""),
+                                "snippet": r.get("body", ""),
+                            }
+                        )
+                if results:
+                    return results
+                self.error_counts["search_empty"] += 1
+            except Exception as e:
+                self.error_counts["search_error"] += 1
+                print(f"Search error: {e}", file=sys.stderr)
+
+            if attempt < retries - 1:
+                self._sleep_backoff(attempt)
+
+        return []
 
     def _extract_batch(self, urls: List[str]) -> List[str]:
         if AIOHTTP_AVAILABLE:
@@ -188,7 +282,9 @@ class WebDeepSearch:
 
     async def _extract_batch_async(self, urls: List[str]) -> List[str]:
         semaphore = asyncio.Semaphore(self.config["max_concurrent_fetches"])
-        timeout = aiohttp.ClientTimeout(total=self.config["timeout"])
+        timeout = aiohttp.ClientTimeout(
+            total=self.config["timeout"], connect=self.config["connect_timeout"]
+        )
 
         async def fetch(url, session):
             async with semaphore:
@@ -200,33 +296,105 @@ class WebDeepSearch:
             return ["" if isinstance(r, Exception) else r for r in results]
 
     async def _extract_content_async_inner(self, url, session):
-        if not BeautifulSoup or not requests:
+        if not BeautifulSoup:
+            self.error_counts["bs4_missing"] += 1
             return ""
-        try:
-            async with session.get(
-                url, headers={"User-Agent": USER_AGENT}, allow_redirects=True
-            ) as resp:
-                if resp.status != 200:
-                    return ""
-                return self._parse_html(await resp.text())
-        except Exception:
-            return ""
+        retries = max(1, int(self.config.get("fetch_retries", 1)))
+        for attempt in range(retries):
+            try:
+                async with session.get(
+                    url, headers={"User-Agent": USER_AGENT}, allow_redirects=True
+                ) as resp:
+                    if resp.status != 200:
+                        self.error_counts[f"http_status_{resp.status}"] += 1
+                        if resp.status in {429, 500, 502, 503, 504} and attempt < retries - 1:
+                            self._sleep_backoff(attempt)
+                            continue
+                        self.fetch_stats["failed"] += 1
+                        return ""
+
+                    content_type = (resp.headers.get("Content-Type") or "").lower()
+                    if not self._is_html_content_type(content_type):
+                        self.fetch_stats["non_html"] += 1
+                        self.fetch_stats["failed"] += 1
+                        self.skipped_url_reasons["non_html_content_type"] += 1
+                        return ""
+
+                    body = await resp.text(errors="ignore")
+                    max_bytes = int(self.config.get("max_response_bytes", 2_000_000))
+                    if len(body.encode("utf-8", errors="ignore")) > max_bytes:
+                        body = body[: max_bytes // 2]
+
+                    return self._parse_html(body)
+            except Exception:
+                self.error_counts["fetch_async_error"] += 1
+                if attempt < retries - 1:
+                    self._sleep_backoff(attempt)
+                    continue
+                self.fetch_stats["failed"] += 1
+                return ""
+        return ""
 
     def _extract_content(self, url: str) -> str:
         if not BeautifulSoup or not requests:
+            if not BeautifulSoup:
+                self.error_counts["bs4_missing"] += 1
+            if not requests:
+                self.error_counts["requests_missing"] += 1
             return ""
-        try:
-            resp = requests.get(
-                url,
-                headers={"User-Agent": USER_AGENT},
-                timeout=self.config["timeout"],
-                allow_redirects=True,
-            )
-            if resp.status_code != 200:
+        retries = max(1, int(self.config.get("fetch_retries", 1)))
+        for attempt in range(retries):
+            try:
+                resp = requests.get(
+                    url,
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=(
+                        self.config["connect_timeout"],
+                        self.config["timeout"],
+                    ),
+                    allow_redirects=True,
+                )
+                if resp.status_code != 200:
+                    self.error_counts[f"http_status_{resp.status_code}"] += 1
+                    if (
+                        resp.status_code in {429, 500, 502, 503, 504}
+                        and attempt < retries - 1
+                    ):
+                        self._sleep_backoff(attempt)
+                        continue
+                    self.fetch_stats["failed"] += 1
+                    return ""
+
+                content_type = (resp.headers.get("Content-Type") or "").lower()
+                if not self._is_html_content_type(content_type):
+                    self.fetch_stats["non_html"] += 1
+                    self.fetch_stats["failed"] += 1
+                    self.skipped_url_reasons["non_html_content_type"] += 1
+                    return ""
+
+                body = resp.text
+                max_bytes = int(self.config.get("max_response_bytes", 2_000_000))
+                if len(body.encode("utf-8", errors="ignore")) > max_bytes:
+                    body = body[: max_bytes // 2]
+
+                return self._parse_html(body)
+            except Exception:
+                self.error_counts["fetch_sync_error"] += 1
+                if attempt < retries - 1:
+                    self._sleep_backoff(attempt)
+                    continue
+                self.fetch_stats["failed"] += 1
                 return ""
-            return self._parse_html(resp.text)
-        except Exception:
-            return ""
+        return ""
+
+    def _is_html_content_type(self, content_type: str) -> bool:
+        if not content_type:
+            return True
+        return "text/html" in content_type or "application/xhtml+xml" in content_type
+
+    def _sleep_backoff(self, attempt: int) -> None:
+        base = float(self.config.get("retry_backoff_seconds", 0.6))
+        time.sleep(base * (2**attempt))
 
     def _parse_html(self, html: str) -> str:
         soup = BeautifulSoup(html, "lxml")
@@ -253,22 +421,38 @@ class WebDeepSearch:
         avg_len = sum(len(s.get("content", "")) for s in self.sources) / len(
             self.sources
         )
-        source_factor = min(1.0, len(self.sources) / 5)
+        source_factor = min(1.0, len(self.sources) / max(1, self.config["max_sources"]))
         content_factor = min(1.0, avg_len / 2000)
-        return round(
-            min(1.0, 0.5 * 0.5 + source_factor * 0.3 + content_factor * 0.2), 2
+        unique_domains = len(
+            set(urlparse(s.get("url", "")).netloc for s in self.sources if s.get("url"))
         )
+        domain_factor = unique_domains / max(1, len(self.sources))
+        score = source_factor * 0.4 + content_factor * 0.4 + domain_factor * 0.2
+        return round(max(0.0, min(1.0, score)), 2)
 
     def _refine_query(self, query: str) -> str:
         if not self.sources:
             return f"{query} guide tutorial"
         all_words = []
         for s in self.sources:
-            all_words.extend(re.findall(r"\b\w{4,}\b", s["title"].lower()))
+            title_tokens = re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{3,}\b", s["title"].lower())
+            snippet_tokens = re.findall(
+                r"\b[a-zA-Z][a-zA-Z0-9_-]{3,}\b", s.get("snippet", "").lower()
+            )
+            all_words.extend(title_tokens)
+            all_words.extend(snippet_tokens)
         query_words = set(query.lower().split())
-        new_words = [w for w in all_words if w not in query_words]
+        new_words = [
+            w
+            for w in all_words
+            if w not in query_words
+            and w not in STOPWORDS
+            and not w.isdigit()
+            and len(w) <= 24
+        ]
         if new_words:
-            return f"{query} {Counter(new_words).most_common(1)[0][0]}"
+            top_words = [word for word, _ in Counter(new_words).most_common(2)]
+            return f"{query} {' '.join(top_words)}"
         return query
 
     def _build_raw_response(self, query: str) -> Dict[str, Any]:
@@ -292,6 +476,9 @@ class WebDeepSearch:
             "iterations_used": self.iterations_used,
             "source_count": len(clean_sources),
             "domain_count": len(set(s["domain"] for s in clean_sources if s["domain"])),
+            "errors": dict(self.error_counts),
+            "skipped_urls": dict(self.skipped_url_reasons),
+            "fetch_stats": self.fetch_stats,
         }
 
 
