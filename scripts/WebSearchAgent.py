@@ -12,13 +12,16 @@ Usage:
 
 import argparse
 import asyncio
+import ipaddress
 import json
+import random
 import re
+import socket
 import sys
 import time
 from collections import Counter
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 # --- Dependency checks ---
 
@@ -101,6 +104,9 @@ DEFAULT_CONFIG = {
     "search_retries": 3,
     "fetch_retries": 2,
     "retry_backoff_seconds": 0.6,
+    "max_total_time": 60,
+    "max_redirects": 5,
+    "chunk_size": 65536,
 }
 
 STOPWORDS = {
@@ -183,9 +189,12 @@ class WebDeepSearch:
             "non_html": 0,
         }
         max_sources = max_sources or self.config["max_sources"]
+        start_time = time.monotonic()
         current_query = query
 
         for _ in range(1, self.config["max_iterations"] + 1):
+            if time.monotonic() - start_time >= self.config["max_total_time"]:
+                break
             self.iterations_used += 1
             results = self._search_ddg(current_query, max_sources)
             if not results:
@@ -265,7 +274,7 @@ class WebDeepSearch:
                 self.error_counts["search_empty"] += 1
             except Exception as e:
                 self.error_counts["search_error"] += 1
-                print(f"Search error: {e}", file=sys.stderr)
+                print("Search error; retrying", file=sys.stderr)
 
             if attempt < retries - 1:
                 self._sleep_backoff(attempt)
@@ -299,40 +308,60 @@ class WebDeepSearch:
         if not BeautifulSoup:
             self.error_counts["bs4_missing"] += 1
             return ""
+        current_url = url
         retries = max(1, int(self.config.get("fetch_retries", 1)))
-        for attempt in range(retries):
-            try:
-                async with session.get(
-                    url, headers={"User-Agent": USER_AGENT}, allow_redirects=True
-                ) as resp:
-                    if resp.status != 200:
-                        self.error_counts[f"http_status_{resp.status}"] += 1
-                        if resp.status in {429, 500, 502, 503, 504} and attempt < retries - 1:
-                            self._sleep_backoff(attempt)
-                            continue
-                        self.fetch_stats["failed"] += 1
-                        return ""
-
-                    content_type = (resp.headers.get("Content-Type") or "").lower()
-                    if not self._is_html_content_type(content_type):
-                        self.fetch_stats["non_html"] += 1
-                        self.fetch_stats["failed"] += 1
-                        self.skipped_url_reasons["non_html_content_type"] += 1
-                        return ""
-
-                    body = await resp.text(errors="ignore")
-                    max_bytes = int(self.config.get("max_response_bytes", 2_000_000))
-                    if len(body.encode("utf-8", errors="ignore")) > max_bytes:
-                        body = body[: max_bytes // 2]
-
-                    return self._parse_html(body)
-            except Exception:
-                self.error_counts["fetch_async_error"] += 1
-                if attempt < retries - 1:
-                    self._sleep_backoff(attempt)
-                    continue
+        for _ in range(int(self.config.get("max_redirects", 5)) + 1):
+            if not self._is_safe_url(current_url):
+                self.skipped_url_reasons["unsafe_url"] += 1
                 self.fetch_stats["failed"] += 1
                 return ""
+            for attempt in range(retries):
+                try:
+                    async with session.get(
+                        current_url,
+                        headers={"User-Agent": USER_AGENT},
+                        allow_redirects=False,
+                    ) as resp:
+                        if resp.status in (301, 302, 303, 307, 308):
+                            location = resp.headers.get("Location")
+                            if not location:
+                                self.fetch_stats["failed"] += 1
+                                return ""
+                            current_url = urljoin(current_url, location)
+                            break
+                        if resp.status != 200:
+                            self.error_counts[f"http_status_{resp.status}"] += 1
+                            if resp.status in {429, 500, 502, 503, 504} and attempt < retries - 1:
+                                self._sleep_backoff(attempt)
+                                continue
+                            self.fetch_stats["failed"] += 1
+                            return ""
+                        content_type = (resp.headers.get("Content-Type") or "").lower()
+                        if not self._is_html_content_type(content_type):
+                            self.fetch_stats["non_html"] += 1
+                            self.fetch_stats["failed"] += 1
+                            self.skipped_url_reasons["non_html_content_type"] += 1
+                            return ""
+                        max_bytes = int(self.config.get("max_response_bytes", 2_000_000))
+                        body_parts = []
+                        total = 0
+                        async for chunk in resp.content.iter_chunked(int(self.config.get("chunk_size", 65536))):
+                            body_parts.append(chunk.decode("utf-8", errors="ignore"))
+                            total += len(body_parts[-1])
+                            if total >= max_bytes:
+                                break
+                        return self._parse_html("".join(body_parts))
+                except Exception:
+                    self.error_counts["fetch_async_error"] += 1
+                    if attempt < retries - 1:
+                        self._sleep_backoff(attempt)
+                        continue
+                    self.fetch_stats["failed"] += 1
+                    return ""
+            else:
+                self.fetch_stats["failed"] += 1
+                return ""
+        self.fetch_stats["failed"] += 1
         return ""
 
     def _extract_content(self, url: str) -> str:
@@ -342,50 +371,95 @@ class WebDeepSearch:
             if not requests:
                 self.error_counts["requests_missing"] += 1
             return ""
+        current_url = url
         retries = max(1, int(self.config.get("fetch_retries", 1)))
-        for attempt in range(retries):
-            try:
-                resp = requests.get(
-                    url,
-                    headers={"User-Agent": USER_AGENT},
-                    timeout=(
-                        self.config["connect_timeout"],
-                        self.config["timeout"],
-                    ),
-                    allow_redirects=True,
-                )
-                if resp.status_code != 200:
-                    self.error_counts[f"http_status_{resp.status_code}"] += 1
-                    if (
-                        resp.status_code in {429, 500, 502, 503, 504}
-                        and attempt < retries - 1
-                    ):
+        for _ in range(int(self.config.get("max_redirects", 5)) + 1):
+            if not self._is_safe_url(current_url):
+                self.skipped_url_reasons["unsafe_url"] += 1
+                self.fetch_stats["failed"] += 1
+                return ""
+            for attempt in range(retries):
+                try:
+                    resp = requests.get(
+                        current_url,
+                        headers={"User-Agent": USER_AGENT},
+                        timeout=(
+                            self.config["connect_timeout"],
+                            self.config["timeout"],
+                        ),
+                        allow_redirects=False,
+                        stream=True,
+                    )
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location")
+                        resp.close()
+                        if not location:
+                            self.fetch_stats["failed"] += 1
+                            return ""
+                        current_url = urljoin(current_url, location)
+                        break
+                    if resp.status_code != 200:
+                        resp.close()
+                        self.error_counts[f"http_status_{resp.status_code}"] += 1
+                        if resp.status_code in {429, 500, 502, 503, 504} and attempt < retries - 1:
+                            self._sleep_backoff(attempt)
+                            continue
+                        self.fetch_stats["failed"] += 1
+                        return ""
+                    content_type = (resp.headers.get("Content-Type") or "").lower()
+                    if not self._is_html_content_type(content_type):
+                        resp.close()
+                        self.fetch_stats["non_html"] += 1
+                        self.fetch_stats["failed"] += 1
+                        self.skipped_url_reasons["non_html_content_type"] += 1
+                        return ""
+                    max_bytes = int(self.config.get("max_response_bytes", 2_000_000))
+                    body_parts = []
+                    total = 0
+                    try:
+                        for chunk in resp.iter_content(chunk_size=int(self.config.get("chunk_size", 65536))):
+                            if not chunk:
+                                continue
+                            body_parts.append(chunk.decode("utf-8", errors="ignore"))
+                            total += len(body_parts[-1])
+                            if total >= max_bytes:
+                                break
+                    finally:
+                        resp.close()
+                    return self._parse_html("".join(body_parts))
+                except Exception:
+                    self.error_counts["fetch_sync_error"] += 1
+                    if attempt < retries - 1:
                         self._sleep_backoff(attempt)
                         continue
                     self.fetch_stats["failed"] += 1
                     return ""
-
-                content_type = (resp.headers.get("Content-Type") or "").lower()
-                if not self._is_html_content_type(content_type):
-                    self.fetch_stats["non_html"] += 1
-                    self.fetch_stats["failed"] += 1
-                    self.skipped_url_reasons["non_html_content_type"] += 1
-                    return ""
-
-                body = resp.text
-                max_bytes = int(self.config.get("max_response_bytes", 2_000_000))
-                if len(body.encode("utf-8", errors="ignore")) > max_bytes:
-                    body = body[: max_bytes // 2]
-
-                return self._parse_html(body)
-            except Exception:
-                self.error_counts["fetch_sync_error"] += 1
-                if attempt < retries - 1:
-                    self._sleep_backoff(attempt)
-                    continue
+            else:
                 self.fetch_stats["failed"] += 1
                 return ""
+        self.fetch_stats["failed"] += 1
         return ""
+
+    def _is_safe_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if hostname == "localhost" or hostname.endswith(".localhost"):
+            return False
+        try:
+            infos = socket.getaddrinfo(hostname, None)
+        except Exception:
+            return False
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0])
+            if ip.version == 6 and ip.ipv4_mapped is not None:
+                ip = ip.ipv4_mapped
+            if not ip.is_global:
+                return False
+        return True
 
     def _is_html_content_type(self, content_type: str) -> bool:
         if not content_type:
@@ -394,16 +468,17 @@ class WebDeepSearch:
 
     def _sleep_backoff(self, attempt: int) -> None:
         base = float(self.config.get("retry_backoff_seconds", 0.6))
-        time.sleep(base * (2**attempt))
+        jitter = random.uniform(0.8, 1.2)
+        time.sleep(base * (2**attempt) * jitter)
 
     def _parse_html(self, html: str) -> str:
         soup = BeautifulSoup(html, "lxml")
         for el in soup.select(", ".join(STRIP_ELEMENTS)):
             el.decompose()
         main = None
-        for selector in CONTENT_SELECTORS:
-            main = soup.select_one(selector)
-            if main and len(main.get_text(strip=True)) > 100:
+        for candidate in soup.select(", ".join(CONTENT_SELECTORS)):
+            if len(candidate.get_text(strip=True)) > 100:
+                main = candidate
                 break
         if not main:
             main = soup.body if soup.body else soup

@@ -25,6 +25,11 @@
   "homepage": "https://github.com/noxgle/opencode-web-deepsearch#readme",
   "author": "",
   "license": "MIT",
+  "files": [
+    "dist/",
+    "scripts/WebSearchAgent.py",
+    "README.md"
+  ],
   "dependencies": {
     "@opencode-ai/plugin": "^1.0.0"
   },

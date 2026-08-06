@@ -25,10 +25,15 @@ const WebDeepSearchTool = tool({
       .describe("Enable iterative search refinement (default: true)"),
   },
   async execute(args) {
-    const maxSources = args.max_sources ?? 3
+    const query = (args.query ?? "").toString().trim()
+    if (!query) {
+      throw new Error("query is required")
+    }
+    const safeQuery = query.length > 500 ? query.slice(0, 500) : query
+    const maxSources = Math.min(args.max_sources ?? 3, 50)
     const deepSearch = args.deep_search !== false
 
-    const result = await Bun.$`python3 ${scriptPath} --query ${args.query} --max-sources ${maxSources} --deep-search ${deepSearch}`.text()
+    const result = await Bun.$`python3 ${scriptPath} --query ${safeQuery} --max-sources ${maxSources} --deep-search ${deepSearch}`.text()
     return result.trim()
   },
 })
