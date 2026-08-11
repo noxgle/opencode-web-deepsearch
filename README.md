@@ -32,6 +32,10 @@ Add to your `opencode.json`:
 
 OpenCode will automatically install the plugin from npm using Bun.
 
+### Alternative: MCP Server
+
+You can also use this tool as a standalone MCP server. See [mcp-web-deepsearch](https://github.com/noxgle/mcp-web-deepsearch) for installation and configuration instructions.
+
 ## Usage
 
 The tool is available as `web-deepsearch` in OpenCode.
