@@ -99,6 +99,8 @@ DEFAULT_CONFIG = {
     "timeout": 30,
     "connect_timeout": 10,
     "max_content_length": 8000,
+    # Maximum indented UTF-8 JSON response size; keep below host tool limits.
+    "response_budget_bytes": 10_000,
     "max_response_bytes": 2_000_000,
     "max_concurrent_fetches": 5,
     "search_retries": 3,
@@ -530,22 +532,35 @@ class WebDeepSearch:
             return f"{query} {' '.join(top_words)}"
         return query
 
+    @staticmethod
+    def _serialize_response(response: Dict[str, Any]) -> str:
+        return json.dumps(response, indent=2, ensure_ascii=False)
+
     def _build_raw_response(self, query: str) -> Dict[str, Any]:
+        # Stable ranking prevents async fetch completion order from selecting content.
         sorted_sources = sorted(
-            self.sources, key=lambda x: len(x.get("snippet", "")), reverse=True
+            self.sources,
+            key=lambda source: (
+                -len(source.get("snippet", "")),
+                source.get("url", ""),
+            ),
         )
         clean_sources = []
-        for s in sorted_sources:
+        total_content_length = 0
+        for source in sorted_sources:
+            content = source.get("content", "") or ""
+            total_content_length += len(content)
             clean_sources.append(
                 {
-                    "title": s["title"],
-                    "url": s["url"],
-                    "snippet": s.get("snippet", ""),
-                    "content": s.get("content", ""),
-                    "domain": urlparse(s["url"]).netloc,
+                    "title": source.get("title", ""),
+                    "url": source.get("url", ""),
+                    "snippet": source.get("snippet", ""),
+                    "content": content,
+                    "domain": urlparse(source.get("url", "")).netloc,
                 }
             )
-        return {
+
+        base = {
             "query": query,
             "sources": clean_sources,
             "iterations_used": self.iterations_used,
@@ -555,6 +570,77 @@ class WebDeepSearch:
             "skipped_urls": dict(self.skipped_url_reasons),
             "fetch_stats": self.fetch_stats,
         }
+        budget = max(1, int(self.config["response_budget_bytes"]))
+        if len(self._serialize_response(base).encode("utf-8")) <= budget:
+            return base
+
+        compact_sources = []
+        for source in clean_sources:
+            compact_sources.append({
+                "title": source["title"],
+                "url": source["url"],
+                "snippet": source["snippet"],
+                "domain": source["domain"],
+                "content_length": len(source["content"]),
+                "content": "",
+            })
+        compact = {
+            **base,
+            "sources": compact_sources,
+            "mode": "compact",
+            "truncated": True,
+            "retained_content_count": 0,
+            "omitted_content_count": sum(bool(s["content"]) for s in clean_sources),
+            "total_content_length": total_content_length,
+            "recovery_hint": "Fetch source URLs separately to retrieve omitted page content.",
+        }
+        # Retain full content in deterministic priority order while remaining within budget.
+        for index, original in enumerate(clean_sources):
+            if not original["content"]:
+                continue
+            content = original["content"]
+            # Find the largest prefix that fits; even a partial page is useful,
+            # and its original content_length remains available for recovery.
+            low, high = 1, len(content)
+            best = ""
+            while low <= high:
+                middle = (low + high) // 2
+                compact["sources"][index]["content"] = content[:middle]
+                compact["retained_content_count"] = 1
+                compact["omitted_content_count"] = sum(
+                    bool(s["content"]) for s in clean_sources
+                ) - 1
+                size = len(self._serialize_response(compact).encode("utf-8"))
+                if size <= budget:
+                    best = content[:middle]
+                    low = middle + 1
+                else:
+                    high = middle - 1
+            if best:
+                compact["sources"][index]["content"] = best
+                compact["sources"][index]["content_truncated"] = len(best) < len(content)
+            else:
+                compact["sources"][index]["content"] = ""
+                compact["retained_content_count"] = 0
+                compact["omitted_content_count"] = sum(bool(s["content"]) for s in clean_sources)
+            if best:
+                break
+        if len(self._serialize_response(compact).encode("utf-8")) <= budget:
+            return compact
+
+        # If metadata alone is too large, drop the lowest-priority sources until it fits.
+        for source in compact["sources"]:
+            source["title"] = source["title"][:256]
+            source["snippet"] = source["snippet"][:512]
+        compact["query"] = query[:256]
+        while compact["sources"] and len(self._serialize_response(compact).encode("utf-8")) > budget:
+            compact["sources"].pop()
+            compact["source_count"] = len(compact["sources"])
+            compact["domain_count"] = len(set(s["domain"] for s in compact["sources"] if s["domain"]))
+            compact["omitted_content_count"] = sum(bool(s["content"]) for s in clean_sources) - compact["retained_content_count"]
+        if len(self._serialize_response(compact).encode("utf-8")) > budget:
+            raise ValueError("response_budget_bytes is too small for the response envelope")
+        return compact
 
 
 def main():
@@ -563,19 +649,45 @@ def main():
     )
     parser.add_argument("--query", required=True, help="Search query")
     parser.add_argument(
-        "--max-sources", type=int, default=5, help="Max sources per iteration"
+        "--max-sources", type=int, default=5, help="Max sources per iteration (1-50)"
     )
     parser.add_argument(
-        "--deep-search", type=str, default="true", help="Enable iterative search loop"
+        "--deep-search", choices=("true", "false"), type=str.lower,
+        default="true", help="Enable iterative search loop (default: true)"
     )
+    parser.add_argument("--max-iterations", type=int, default=5, help="Maximum refinement rounds (1-10)")
+    parser.add_argument("--max-content-length", type=int, default=8000, help="Maximum extracted characters per page (500-8000)")
+    parser.add_argument("--timeout", type=int, default=30, help="Per-request timeout in seconds (5-60)")
+    parser.add_argument("--max-total-time", type=int, default=60, help="Maximum total search time in seconds (10-120)")
     args = parser.parse_args()
 
-    deep_search = args.deep_search.lower() == "true"
-    agent = WebDeepSearch()
+    limits = {
+        "max_sources": (1, 50, args.max_sources),
+        "max_iterations": (1, 10, args.max_iterations),
+        "max_content_length": (500, 8000, args.max_content_length),
+        "timeout": (5, 60, args.timeout),
+        "max_total_time": (10, 120, args.max_total_time),
+    }
+    for name, (minimum, maximum, value) in limits.items():
+        if not minimum <= value <= maximum:
+            parser.error(f"{name.replace('_', '-')} must be between {minimum} and {maximum}")
+
+    deep_search = args.deep_search == "true"
+    config = {
+        "max_iterations": args.max_iterations,
+        "max_content_length": args.max_content_length,
+        "timeout": args.timeout,
+        "max_total_time": args.max_total_time,
+    }
+    agent = WebDeepSearch(config)
     result = agent.execute(
         query=args.query, max_sources=args.max_sources, deep_search=deep_search
     )
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    output = WebDeepSearch._serialize_response(result)
+    budget = int(agent.config["response_budget_bytes"])
+    if len(output.encode("utf-8")) > budget:
+        raise RuntimeError("Response exceeded configured response budget")
+    print(output)
 
 
 if __name__ == "__main__":

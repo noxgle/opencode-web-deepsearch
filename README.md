@@ -47,6 +47,10 @@ The tool is available as `web-deepsearch` in OpenCode.
 | `query` | string | required | Search query |
 | `max_sources` | number | 3 | Maximum sources to extract |
 | `deep_search` | boolean | true | Enable iterative search refinement |
+| `max_iterations` | number | 5 | Maximum refinement rounds (1–10) |
+| `max_content_length` | number | 8000 | Maximum extracted characters per page (500–8000) |
+| `timeout` | number | 30 | Per-request timeout in seconds (5–60) |
+| `max_total_time` | number | 60 | Maximum total search time in seconds (10–120) |
 
 ### Example
 
@@ -60,7 +64,11 @@ Or with explicit arguments:
 {
   "query": "TypeScript 5.x new features",
   "max_sources": 5,
-  "deep_search": true
+  "deep_search": true,
+  "max_iterations": 5,
+  "max_content_length": 8000,
+  "timeout": 30,
+  "max_total_time": 60
 }
 ```
 
@@ -83,6 +91,38 @@ Or with explicit arguments:
   "domain_count": 3
 }
 ```
+
+## Response size and compact mode
+
+Each extracted page is capped by the public `max_content_length` argument (default 8,000 characters, range 500–8,000). Independently, the complete indented JSON response is capped at 10,000 UTF-8 bytes to avoid host-side output truncation. This is not a guarantee about any host's own serialization or display limit.
+
+Responses that fit retain the legacy full-response shape. Oversized responses switch to `mode: "compact"` and include `truncated`, `retained_content_count`, `omitted_content_count`, `total_content_length`, and `recovery_hint`. Compact sources retain `title`, `url`, `snippet`, `domain`, and original `content_length`; `content` is empty when omitted and may remain populated for prioritized sources that fit. Fetch important omitted URLs separately with an available page-fetching tool. Reduce `max_sources` if fewer sources are needed, but note that this does not replace the total response limit.
+
+Example compact response:
+
+```json
+{
+  "query": "example",
+  "mode": "compact",
+  "truncated": true,
+  "retained_content_count": 1,
+  "omitted_content_count": 2,
+  "total_content_length": 24000,
+  "recovery_hint": "Fetch source URLs separately to retrieve omitted page content.",
+  "sources": [
+    {
+      "title": "Example page",
+      "url": "https://example.com/article",
+      "snippet": "A short search snippet",
+      "domain": "example.com",
+      "content_length": 8000,
+      "content": "... possibly retained full content ..."
+    }
+  ]
+}
+```
+
+`content_length` counts extracted Python characters; the response budget measures serialized UTF-8 bytes after JSON escaping.
 
 ## Requirements
 

@@ -127,6 +127,26 @@ test(
 )
 
 test(
+  "Python response builder enforces compact response budget",
+  async () => {
+    const scriptPath = path.resolve(__dirname, "../scripts/WebSearchAgent.py")
+    const testPath = path.resolve(__dirname, "test_response_budget.py")
+    const result = await new Promise<string>((resolve, reject) => {
+      const proc = spawn("python3", ["-m", "unittest", testPath], { cwd: path.dirname(path.dirname(testPath)) })
+      let stdout = ""
+      let stderr = ""
+      proc.stdout?.on("data", (data) => { stdout += data.toString() })
+      proc.stderr?.on("data", (data) => { stderr += data.toString() })
+      proc.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(stderr || stdout)))
+      proc.on("error", reject)
+    })
+    expect(result).toContain("OK")
+    expect(fs.existsSync(scriptPath)).toBe(true)
+  },
+  30000
+)
+
+test(
   "Python script returns valid JSON output",
   async () => {
     const scriptPath = path.join(__dirname, "scripts", "WebSearchAgent.py")
