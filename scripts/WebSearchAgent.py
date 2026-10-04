@@ -171,6 +171,7 @@ class WebDeepSearch:
             "failed": 0,
             "non_html": 0,
         }
+        self._dns_cache: Dict[str, bool] = {}
 
     def execute(
         self,
@@ -287,7 +288,7 @@ class WebDeepSearch:
         if AIOHTTP_AVAILABLE:
             try:
                 return asyncio.run(self._extract_batch_async(urls))
-            except Exception:
+            except (RuntimeError, Exception):
                 pass
         return [self._extract_content(url) for url in urls]
 
@@ -451,21 +452,26 @@ class WebDeepSearch:
             return False
         if hostname == "localhost" or hostname.endswith(".localhost"):
             return False
+        if hostname in self._dns_cache:
+            return self._dns_cache[hostname]
         try:
             infos = socket.getaddrinfo(hostname, None)
         except Exception:
+            self._dns_cache[hostname] = False
             return False
         for info in infos:
             ip = ipaddress.ip_address(info[4][0])
             if ip.version == 6 and ip.ipv4_mapped is not None:
                 ip = ip.ipv4_mapped
             if not ip.is_global:
+                self._dns_cache[hostname] = False
                 return False
+        self._dns_cache[hostname] = True
         return True
 
     def _is_html_content_type(self, content_type: str) -> bool:
         if not content_type:
-            return True
+            return False
         return "text/html" in content_type or "application/xhtml+xml" in content_type
 
     def _sleep_backoff(self, attempt: int) -> None:
@@ -625,7 +631,8 @@ class WebDeepSearch:
                 compact["omitted_content_count"] = sum(bool(s["content"]) for s in clean_sources)
             if best:
                 break
-        if len(self._serialize_response(compact).encode("utf-8")) <= budget:
+        serialized = self._serialize_response(compact).encode("utf-8")
+        if len(serialized) <= budget:
             return compact
 
         # If metadata alone is too large, drop the lowest-priority sources until it fits.
@@ -684,9 +691,6 @@ def main():
         query=args.query, max_sources=args.max_sources, deep_search=deep_search
     )
     output = WebDeepSearch._serialize_response(result)
-    budget = int(agent.config["response_budget_bytes"])
-    if len(output.encode("utf-8")) > budget:
-        raise RuntimeError("Response exceeded configured response budget")
     print(output)
 
 

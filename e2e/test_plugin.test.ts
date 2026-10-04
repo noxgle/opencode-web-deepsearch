@@ -132,12 +132,12 @@ test(
     const scriptPath = path.resolve(__dirname, "../scripts/WebSearchAgent.py")
     const testPath = path.resolve(__dirname, "test_response_budget.py")
     const result = await new Promise<string>((resolve, reject) => {
-      const proc = spawn("python3", ["-m", "unittest", testPath], { cwd: path.dirname(path.dirname(testPath)) })
+      const proc = spawn("python3", ["-m", "unittest", "e2e.test_response_budget"], { cwd: path.resolve(__dirname, "..") })
       let stdout = ""
       let stderr = ""
       proc.stdout?.on("data", (data) => { stdout += data.toString() })
       proc.stderr?.on("data", (data) => { stderr += data.toString() })
-      proc.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(stderr || stdout)))
+      proc.on("exit", (code) => code === 0 ? resolve(stdout) : reject(new Error(stderr || stdout)))
       proc.on("error", reject)
     })
     expect(result).toContain("OK")
@@ -149,7 +149,7 @@ test(
 test(
   "Python script returns valid JSON output",
   async () => {
-    const scriptPath = path.join(__dirname, "scripts", "WebSearchAgent.py")
+    const scriptPath = path.resolve(__dirname, "../scripts/WebSearchAgent.py")
 
     // Check script exists
     expect(fs.existsSync(scriptPath)).toBe(true)

@@ -92,6 +92,11 @@ class PublicCliArgumentTests(unittest.TestCase):
         result = self.run_cli("--max-iterations", "1", "--max-content-length", "500", "--timeout", "5", "--max-total-time", "10")
         self.assertNotEqual(result.returncode, 2)
         self.assertNotIn("must be between", result.stderr)
+        # Verify the output is valid JSON with expected keys
+        if result.stdout.strip():
+            data = json.loads(result.stdout)
+            self.assertIn("query", data)
+            self.assertIn("sources", data)
 
 
 if __name__ == "__main__":

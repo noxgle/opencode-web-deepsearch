@@ -9,7 +9,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublish": "tsc"
+    "prepublishOnly": "tsc"
   },
   "keywords": [
     "opencode",
@@ -40,7 +40,8 @@
     "vitest": "^4.1.4"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.0.0",
+    "python": ">=3.8"
   },
   "opencode": {
     "tools": [

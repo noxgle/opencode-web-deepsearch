@@ -80,12 +80,3 @@ const WebDeepSearchTool = tool({
 export default async function webDeepSearchPlugin(): Promise<ReturnType<typeof tool>> {
   return WebDeepSearchTool
 }
-
-// Export as Plugin for OpenCode
-export const WebDeepSearchPlugin: Plugin = async () => {
-  return {
-    tool: {
-      "web-deepsearch": WebDeepSearchTool,
-    },
-  }
-}
